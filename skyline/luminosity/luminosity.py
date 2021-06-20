@@ -693,7 +693,7 @@ class Luminosity(Thread):
                                 except:
                                     logger.error('error :: failed to close memcache_client')
 
-                if not last_processed_anomaly_id:
+                if not process_anomaly_id:
                     # Check MySQL
                     query = (
                       "(SELECT id FROM anomalies "
