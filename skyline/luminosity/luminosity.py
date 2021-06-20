@@ -693,29 +693,41 @@ class Luminosity(Thread):
                                 except:
                                     logger.error('error :: failed to close memcache_client')
 
-                if not process_anomaly_id:
+                if not last_processed_anomaly_id:
                     # Check MySQL
-                    query = (
-                      "(SELECT id FROM anomalies "
-                      "WHERE id NOT IN (SELECT DISTINCT id FROM luminosity) "
-                      "AND anomaly_timestamp > (SELECT UNIX_TIMESTAMP(NOW()) - 600) "
-                      "ORDER BY anomaly_timestamp ASC LIMIT 1) "
-                      "UNION "
-                      "(SELECT id FROM anomalies "
-                      "WHERE id IN (SELECT DISTINCT id FROM luminosity) "
-                      "ORDER BY anomaly_timestamp DESC LIMIT 1)"
-                    )
+                    now = int(time())
+                    after = now - 600
+                    query = 'SELECT id FROM anomalies WHERE anomaly_timestamp > \'%s\'' % str(after)  # nosec
                     results = None
                     try:
-                      results = mysql_select(skyline_app, query)
+                        results = mysql_select(skyline_app, query)
                     except:
-                      logger.error('error :: MySQL quey failed - %s' % query)
+                        logger.error('error :: MySQL quey failed - %s' % query)
                     if results:
-                      process_anomaly_id = int(results[0][0])
-                      logger.info('Using the new query found new anomaly id to process from the DB - %s' % str(process_anomaly_id))
-                      last_processed_anomaly_id = int(results[1][0])
+                        process_anomaly_id = int(results[0][0])
+                        logger.info('found new anomaly id to process from the DB - %s' % str(process_anomaly_id))
+                        # Handle the first one
+                        last_processed_anomaly_id = process_anomaly_id - 1
                     else:
-                      logger.info('no new anomalies in the anomalies table')
+                        logger.info('no new anomalies in the anomalies table')
+
+                # TODO: Process anomaly id query should be revised. Ignore above and overwrite with this currently:
+                now = int(time())
+                after = now - 600
+                query = 'SELECT a.id, l.id FROM anomalies a LEFT JOIN luminosity l on(l.id=a.id) WHERE a.anomaly_timestamp > (SELECT UNIX_TIMESTAMP(NOW()) - 600) AND l.id IS NULL ORDER BY a.anomaly_timestamp DESC LIMIT 1'
+                results = None
+                try:
+                    results = mysql_select(skyline_app, query)
+                except:
+                    logger.error('error :: MySQL quey failed - %s' % query)
+                if results:
+                    if not results[0][1]:
+                        process_anomaly_id = int(results[0][0])
+                        logger.info('Using the new query found new anomaly id to process from the DB - %s' % str(process_anomaly_id))
+                        # Handle the first one
+                        last_processed_anomaly_id = process_anomaly_id - 1
+                else:
+                    logger.info('no new anomalies in the anomalies table')
 
                 # @added 20190517 - Bug #3016: Handle no anomaly ids in luminosity
                 #                   Branch #3002: docker
@@ -723,6 +735,22 @@ class Luminosity(Thread):
                 # reports errors as there are no anomaly ids
                 if str(last_processed_anomaly_id) == 'None':
                     last_processed_anomaly_id = 0
+
+                query = 'SELECT id FROM anomalies WHERE id > \'%s\'' % str(last_processed_anomaly_id)  # nosec
+                results = None
+                try:
+                    results = mysql_select(skyline_app, query)
+                except:
+                    logger.error('error :: MySQL quey failed - %s' % query)
+                if results:
+                    try:
+                        process_anomaly_id = int(results[0][0])
+                        logger.info('found the next new anomaly id to process from the DB - %s' % str(process_anomaly_id))
+                    except:
+                        logger.error(traceback.format_exc())
+                        logger.error('error :: from query - %s' % query)
+                else:
+                    logger.info('no new anomalies in the anomalies table')
 
                 if process_anomaly_id and last_processed_anomaly_id:
                     if isinstance(last_processed_anomaly_id, int):
